@@ -1,0 +1,196 @@
+---
+title: "01 Geospatial Visualization for Transportation Trends using R"
+output: html_notebook
+---
+
+#Introduction
+
+NOTE: This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Transportation is a spatial phenomenon. It is natural then that we would be interested in studying it from a spatial perspective. In recent years, this has become increasingly possible, thanks to 1) the availability of information that is geo-coded, in other words, that has geographical references; and 2) the availability of software to analyze such information.
+
+A key technology fuelling this trend is that of Geographical Information Systems (GIS). GIS are, at their simplest, digital mapping for the 21st century. In most cases, however, GIS go beyond cartographic functions to also enable and enhance our ability to analyze data.
+
+There are many available packages for geographical information analysis. Some are very user friendly, and widely available in many institutional contexts, such as ESRI's Arc software. Others are fairly specialized, such as Caliper's TransCAD, which implements many operations of interest for transportation engineering and planning. Others have the advantage of being more flexible and/or free.
+
+Such is the case of the R statistial computing language. `R` has been adopted by many in the geographical analysis community, and a number of specialized libraries have been developed to support mapping and spatial data analysis functions.
+
+The objective of this note is to provide an introduction to the use of R for geospatial visualization.
+
+To use this note you will need the following:
+
+* This R markdown notebook.
+* A zip file provided with the reading, that contains the following:
+    + A set of files (shape) called `Hamilton CMA tts06`
+    + An Excel file called `Hamilton CMA Trips by Purpose`
+
+The data used for this tutorial were retrieved from the 2011 Transportation Tomorrow Survey [TTS](http://www.transportationtomorrow.on.ca/), the periodic travel survey of the Greater Toronto and Hamilton Area, as well as data from the 2011 Canadian Census [Census Program](http://www12.statcan.gc.ca/census-recensement/index-eng.cfm).
+
+#Loading geographic files
+
+The most basic task when doing digital mapping is working with geographical files.
+
+There are many different formats for geographic files, depending on whether they are vectors (i.e., line-based) or raster (i.e., pixel-based), and also by different developers. A library (`rgdal`) has been developed to support reading and working with many different types of geospatial files.
+
+A common type of file, which has to some extent become the de-facto universal format is ESRI's shape. A shape "file" is in fact a collection of files that include geospatial as well as alphanumeric information.
+
+We'll begin this tutorial by loading and visualizing a shape file.
+
+Before starting, however, it is useful to make sure that you have a clean Environment. The following command will remove all data and values currently in the Environment.
+```{r}
+rm(list = ls())
+```
+
+Next, you must load the libraries needed for analysis (you may need to install them before they are available for loading):
+```{r}
+library(rgdal)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tmap)
+library(ggmap)
+library(broom)
+library(readr)
+library(maptools)
+library(sf)
+```
+
+We now proceed to see how a geospatial file can be read. 
+
+For this example, you will use an ESRI shape file that contains the Traffic Analysis Zones for the Hamilton Census Metropolitan Area (CMA) (retrieved from [here](http://dmg.utoronto.ca/survey-boundary-files#2006_zone)). The command used for this is `sf::st_read` (note that `package::function` indicates a function in the name package). 
+
+To read the file, *you need to navigate to the directory where the files are and make it your working directory*. To assign the file to an object, use the assignment `<-` and give the object a name; in this case `taz`, short for "traffic analyisis zones":
+```{r}
+taz <- st_read(".", layer = "Hamilton CMA tts06")
+```
+
+This assignment will create an `sf` table, an R object used to store geographical information (in this example spatial polygons; other types of spatial data are points, lines). Objects of the class `sf` use the Simple Features standard for representing geometry.
+
+Traffic Analysis Zones (or TAZ) are a form of zoning system typically used for the analysis of transportation systems. TAZs are typically designed to contain a relatively small number of households, hopefully with relatively homogenous socio-economic and/or demographic characteristics. Currently, the table includes just some identifiers and the geometry of the zones. You can verify this by means of the `head` function:
+```{r}
+head(taz)
+```
+
+You can quickly plot this object using R's general purpose `plot` command. To plot only the geometry use the function `st_geometry` which will ignore other attributes in the table. We will use other plotting strategies later on, but for the moment this is enough to quickly visualize `taz` as a map:
+```{r}
+plot(st_geometry(taz))
+```
+
+As you saw above, this `sf` dataframe contains some identifiers, including "GTA06", which is the unique identifier for the traffic analysis zones. This identifier was read as a number, so we will change it to character. This can be done by means of the functions `mutate` and `as.character`. `as.character` will take a variable and will convert it to characters, whereas `mutate` changes the contents of the table:
+```{r}
+taz <- mutate(taz, GTA06 = as.character(GTA06))
+```
+
+There is not much information in this table besides this, and the table therefore is not particularly interesting. If more data are available, they can be joined to the table for further analysis, as you will see next.
+
+Before proceeding, it is important to note that different packages in R can be used to visualize geospatial information, each with strenghts and weaknesses. Two such packages are:
+
+* `ggplot2`: used for 2 dimensional plots; you used it before when you read `01 Overview of Data Analysis and Visualization.Rmd`
+* `tmap`: used to create thematic maps.
+* `ggmap`: a package for static maps that works on similar principles as ggplot2.
+* `leaflet`: used to create dynamic maps.
+
+# Joining data to an `sf` object
+
+The geographical file, and map, that you produced above are not terribly interesting, since they contain little more than the geometry of the zones. Fortunately, we have additional information in a separate Excel file that can help us make this map more interesting. This file can be read using the `read_excel` command:
+```{r}
+travel_data <- read_excel("Hamilton CMA Trips by Purpose.xlsx")
+```
+
+The above creates a data frame called `travel_data`. This data frame includes information drawn from the 2011 Transportation Tomorrow Survey (TTS), on number of trips for different purposes that originate at each TAZ, and information from the Canadian Census of 2011. (for information on the TTS check the [data guide](http://www.dmg.utoronto.ca/pdf/tts/2011/dataguide2011.pdf)).
+
+The TTS columns in the data frame are number of trips by purpose (e.g., Work trips, School trips, Market and Shop trips, etc.), in addition to an identifier GTA06, which is identical to the GTA06 column in the `taz` dataframe.
+
+The Census columns include for each TAZ the population, number of full time and part time workers, number of people who worked at home, population density, median age of population, number of families of different sizes, median income, average income, employment and unemployment rates, and median commuting duration in minutes. 
+
+To join two tables, the set of `join` commands from the `dplyer` package are useful. In this case, we want to execute a so-called _left join_, that when applied to tables x and y returns all the rows from table x (to the left) and all rows and columns of tables x and y. You can join the data frame `travel_data` to `taz` as follows:
+```{r}
+taz <- left_join(taz, travel_data)
+```
+
+It is possible to conduct operations using the data frame with the SpatialPolygonDataFrame. For instance, let's say that you would like to calculate a per capita measure of mobility, say trips per capita, for a specific purpose. This can be done using the number of work trips and the population, and the function `mutate`:
+```{r}
+taz <- mutate(taz, work.pc = Work / Population)
+```
+
+You can use more complex formulas too. For instance, for each zone find the proportion of work trips relative to the total number of trips produced by each zone:
+```{r}
+taz <- mutate(taz, work.prop = Work / (Unknown + Subsequent_School + Daycare + Facilitate_passenger + Home + Market_Shop + Other + Subsequent_Work + School + Work))
+```
+
+And you can query the table. For instance, find how many zones produce 646 work trips or more:
+```{r}
+sum(taz$Work > 646)
+```
+
+# Creating thematic maps
+
+Once that a `sf` dataframe has interesting information, it is possible to create thematic maps. Let's try the package `ggplot2` for this purpose.
+
+As before, `ggplot2` objects are created by layering. We begin by creating an empty `ggplot2` object as follows:
+```{r}
+ggplot(data = taz)
+```
+
+It is blank because we have not yet told the package to actually draw anything. The function for rendering `sf` objects is `geom_sf`. We can plot the geometry only as follows:
+```{r}
+ggplot(data = taz) +
+  geom_sf()
+```
+
+The default settings of `qtm` use a gray style for the polygons and add a frame to the map. Thematic maps are created by mapping some aesthetic value of the plot to a variable. For instance, we can map the aestethic `fill` to `Work`:
+```{r}
+ggplot(data = taz) +
+  geom_sf(aes(fill = Work))
+```
+
+We can also change other aesthetics without mapping them to a variable (so we put them outside of `aes()`). In this case we change the color of the lines to "white":
+```{r}
+ggplot(data = taz) +
+  geom_sf(aes(fill = Work), color = "white")
+```
+
+When we use a variable to fill the polygons we create a choropleth map (a map where the colors are selected based on the values of an underlying variable). This creates a _statistical map_. The map also includes a legend that can be used to interpret the coloring of the map.
+
+The default coloring scheme was for a continuous variable. As you can see, the presence of a few zones with a large number of trips obscures somewhat the distribution of values elsewhwere. This reduces the usefulness of the map, and you might want to change this by using a different coloring scheme. For instance, using the `cut()` function it is possible to categorize the variable in quantiles. The simplest quantile is when we divide the sample in two. For this we would indicate that the cuts are done at _breaks_ 0, 0.5, and 1, or in other words at 0%, 50%, and 100% of the sample:
+```{r}
+Work_breaks <- quantile(taz$Work, c(0, 0.5, 1))
+
+ggplot(data = taz) +
+  geom_sf(aes(fill = cut(Work, Work_breaks)))
+```
+
+Or we could use a finer set of breaks, say at 0%, 20%, 40%, 60%, 80%, 100% (these are called _quintiles_, they divide the sample in five equal parts):
+```{r}
+Work_breaks <- quantile(taz$Work, c(0, 0.2, 0.4, 0.6, 0.8, 1))
+
+ggplot(data = taz) +
+  geom_sf(aes(fill = cut(Work, Work_breaks)))
+```
+
+We can improve the map above in many ways, but for the moment, it is useful to change the coloring scheme to better represent the way values change from less to more. We do this by means of the function `scale_fill_brewer()` and selecting _sequential_ color palette for the plot:
+```{r}
+ggplot(data = taz) +
+  geom_sf(aes(fill = cut(Work, Work_breaks))) + 
+  scale_fill_brewer(type = "seq")
+```
+
+The map above map is easier to interpret from a statistical standpoint, because it shows that 20% of the zones that generate the least trips generate between zero and 158 trips each. The second quintile are zones that generate between 158 and 493 trips, and so on. 
+
+Congratulations! Now you can do thematic mapping using R.
+
+## Bonus Material
+
+The advantage of using a programmatic approach to visualization (i.e., programming your maps) is that everything is documented, it makes it easy to reproduce the maps, and it also gives you very fine control over the aspect of your maps. An advanced example is below (do not worry about understanding the code below, it is just to illustrate the possibilities):
+
+```{r}
+Work_breaks <- quantile(taz$Work, c(0, 0.2, 0.4, 0.6, 0.8, 1))
+
+ggplot(data = taz) +
+  geom_sf(aes(fill = cut(Work, Work_breaks))) + 
+  scale_fill_brewer(type = "seq", labels = c("<158", "159-493", "494-840", "840-1,240", ">1,241")) +
+  theme_minimal() +
+  labs(fill = "Work Trips (Quintiles)") +
+  theme(legend.position = "bottom")
+```
+

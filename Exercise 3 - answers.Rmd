@@ -1,0 +1,360 @@
+---
+title: "Exercise 3: Network Analysis"
+output: html_notebook
+---
+
+For this exercise, you will compare a portion of the existing airline network in Northwestern United States to a hub-and-spoke configuration. The data for this task are found in the following table, which shows the number of domestic passengers (000s) for each O-D pair:.
+
+* Readings:
++ `03 Network Analysis.Rmd` (found under Labs/Assignments) 
++ `Chapter 5.pdf`
++ `Basic Network Concepts.ppt`
+
+* Due date:	See course outline for due date.
+
+* Materials: This R Notebook, and a zip file that contains the following files (found under Labs/Assignments)
++ A file called `hamilton_graph_local.RData`
++ A file called `hamilton_neighborhoods.RData`
++ A file called `hamilton_eateries.RData`
+
+* Instructions:	Answers must be provided by typing your solutions using RStudio and this R Notebook file. Change the name of the file to `Exercise 3 (Name-Student Number).Rmd`
+
+Add new code chunkS by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*. When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+***
+
+# Preliminaries
+
+Begin by clearing the workspace and loading the datasets that you will need for this exercise. They are available from the Readings section. For instance, you will need the `rgdal` package to read the shape file. Make sure all packages that you need are installed and loaded `library()`. 
+```{r message=FALSE}
+library(igraph)
+library(sf)
+library(tidygraph)
+library(tidyverse)
+library(tmaptools)
+library(units)
+```
+
+Load the data. These are the same data objects that you saw in your reading (`03 Network Analysis.Rmd`):
+```{r}
+load("hamilton_graph_local.RData")
+load("hamilton_neighborhoods.RData")
+load("hamilton_eateries.RData")
+```
+
+Add length and travel time to the road network (assuming a walking speed of walking speed of 5.0 km/h = 84 m/min)):
+```{r}
+hamilton_graph_local <- hamilton_graph_local %>% # Pass the object `hamilton_graph_local` to the following function
+    activate(edges) %>% # Activate the edges of the `tbl_graph` object
+    mutate(length = st_length(geometry),  # Use function `st_length()` and the geometry of the edges to calculate the length of the link, and use `mutate()` to create a new column in the table to store this information
+           time = length/set_units(84, "m/min"))
+```
+
+Extract Westdale from the neighborhood boundaries:
+```{r}
+westdale <- hamilton_neighborhoods %>%
+    filter(str_detect(Name, "Westdale"))
+```
+
+The area of Westdale is:
+```{r}
+westdale %>% # Pass the object `my_neighborhood` to the next function
+    st_combine() %>% # Combine polygons
+    st_area() # The function `st_area()` returns the areas of polygons
+```
+
+Extract and clean the segment of the road network for Westdale:
+```{r}
+westdale_nodes <- hamilton_graph_local %>% # Pass the hamilton_graph_local object to the next function
+  activate(nodes) %>%  # Activate the nodes of the `tbl_graph` object
+  as_tibble() %>% # Convert to data frame
+  st_as_sf() %>% # Convert to simple features
+  st_crop(westdale) #%>% # Crop using `my_neighborhood`
+
+westdale_graph <- hamilton_graph_local %>% # Pass the object `hamilton_graph_local` to the next function
+  induced_subgraph(v = westdale_nodes$nodeID, impl = "copy_and_delete") %>% # Induced subgraph will take the input graph (that is `hamilton_graph_local`) and induce a subgraph that includes only the vertices (i.e., nodes) indicated in the argument; notice that we are passing the `nodeID` (the unique identifiers of the nodes) of our cropped list of nodes. The method for inducing the subgraph is to copy the elements that will be retained, and then deleting the rest.
+  as_tbl_graph() # Convert the graph to a `tbl_graph` object
+```
+
+Remove isolates:
+```{r}
+westdale_components <- components(westdale_graph)
+
+westdale_graph <- westdale_graph %>% # Pass object `my_graph` to next function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  mutate(component = factor(westdale_components$membership)) # Use `mutate()` to create a new column with the component membership of the nodes. The membership is a number, but in reality a label, so we will convert it to a factor
+
+westdale_graph <- westdale_graph %>% # Pass the object `my_graph` to the following function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  filter(component == 1) # Filter by matching to the component that we wish to retain
+```
+
+Re-label nodes:
+```{r}
+westdale_graph <- westdale_graph %>% # Pass the object `my_graph` to the following function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  mutate(nodeID = 1:n()) # Use the function `mutate()` to modify the contents of the column `nodeID`: the new values will be from 1 to the number of rows
+```
+
+Plot the road network in Westdale:
+```{r}
+ggplot() +
+    geom_sf(data = westdale_graph %>%
+                activate(edges) %>%
+                as_tibble() %>%
+                st_as_sf()) + 
+    geom_sf(data = westdale_graph %>%
+                activate(nodes) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            color = "red")
+```
+
+***
+
+# EXERCISE 3: Network Analysis (100 marks)
+
+## Questions
+
+1. What is the density of nodes in Westdale? (5)
+
+The area of the neighborhood is 2100640 [m^2]
+
+
+The number of nodes in the network can be read from the table:
+```{r}
+westdale_graph
+```
+
+There are 202 nodes. Then, the density of nodes is (converting m^2 to km2):
+```{r}
+202 / (2100640 / 1000000)
+```
+
+Or approximately 96.2 nodes per square km.
+
+2. What is the density of the network in Westdale? (5)
+
+This one requires that we calculate the total length of the network in Westdale:
+```{r}
+westdale_graph %>%
+    activate(edges) %>%
+    as_tibble() %>%
+    pull(length) %>%
+    sum()
+```
+
+Then the density of the network is (converting to km):
+```{r}
+29.06313 / (2100640 / 1000000) 
+```
+
+Or approximately 13.8 km per square km.
+
+3. Calculate the degree of the nodes for the network in Westdale and plot the network showing the degree of the nodes. (5)
+
+Calculate the degree of the nodes and add to table:
+```{r}
+westdale_graph <- westdale_graph %>%
+    activate(nodes) %>%
+    mutate(degree = degree(westdale_graph))
+```
+
+Once that the degree has been added to the table of nodes we can plot:
+```{r}
+ggplot() +
+    geom_sf(data = westdale_graph %>%
+                activate(edges) %>%
+                as_tibble() %>%
+                st_as_sf()) + 
+    geom_sf(data = westdale_graph %>%
+                activate(nodes) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            aes(color = degree,
+                size = degree)) + 
+    scale_color_distiller(palette = "OrRd", 
+                          direction = 1) + 
+    scale_size(range = c(1, 5))
+```
+
+
+4. Plot the degree distribution for the network. (5)
+
+```{r}
+ggplot() +
+    geom_bar(data = westdale_graph %>%
+                 activate(nodes) %>%
+                 as_tibble(),
+             aes(x = degree, y = ..prop..))
+```
+
+5. Calculate the betweenness of the nodes and links of the network in Westdale and plot. (10)
+
+```{r}
+westdale_graph <- westdale_graph %>%
+    activate(nodes) %>%
+    mutate(betweenness = centrality_betweenness(weights = time)) %>%
+    activate(edges) %>%
+    mutate(betweenness = centrality_edge_betweenness(weights = time))
+```
+
+Plots:
+```{r}
+# Node betweenness
+ggplot() +
+    geom_sf(data = westdale_graph %>%
+                activate(edges) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            color = "darkgray") +
+    geom_sf(data = westdale_graph %>%
+                activate(nodes) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            aes(color = betweenness,
+                size = betweenness)) +
+    scale_color_distiller(palette = "OrRd", 
+                          direction = 1) + 
+    scale_size(range = c(1, 4))
+
+# Edge betweenness
+ggplot() +
+    geom_sf(data = westdale_graph %>%
+                activate(edges) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            aes(color = betweenness,
+                size = betweenness)) +
+    scale_color_distiller(palette = "OrRd", 
+                          direction = 1) + 
+    scale_size(range = c(1, 4))
+
+
+```
+
+6. Plot the eateries in Westdale along with the betweenness of the links. Discuss the pattern observed. (10)
+
+Extract the eateries:
+```{r}
+westdale_eateries <- hamilton_eateries %>%
+    st_crop(westdale)
+```
+
+Plot:
+```{r}
+ggplot() +
+    geom_sf(data = westdale_graph %>%
+                activate(edges) %>%
+                as_tibble() %>%
+                st_as_sf(),
+            aes(color = betweenness,
+                size = betweenness)) +
+    scale_color_distiller(palette = "OrRd", 
+                          direction = 1) + 
+    scale_size(range = c(1, 4)) +
+    geom_sf(data = westdale_eateries,
+            size = 3,
+            aes(shape = type))
+```
+
+Quite a few of the eateries are found along the links with the highest betweenness, meaning that those are probably the most transited links when traveling by foot around Westdale.
+
+7. Select a different neighborhood in Hamilton. Extract and prepare its network for analysis. (15)
+
+#1--Filter the name of the selected neighborhood
+```{r}
+my_neighborhood1 <- hamilton_neighborhoods %>% # Here we pass the object `hamilton_neighborhoods` to the next function
+  filter(str_detect(Name, "Allison"))
+```
+ 
+
+#2--Calculate the total areas of polygons for that neighborhood.
+```{r}
+my_neighborhood1 %>% # Pass the object `my_neighborhood` to the next function
+  st_combine() %>% # The function `st_combine()` returns a single combined geometry without resolved internal boundaries
+  st_area() # The function `st_area()` returns the areas of polygons
+```
+#3--Draw a buffer around your neighborhood
+```{r}
+fmy_neighborhood <- my_neighborhood %>% # Pass the object `my_neighborhood` to the next function
+  st_combine() %>% # The function `st_combine()` returns a single combined geometry without resolved internal boundaries
+  st_buffer(dist = 20) # The function `st_buffer()` creates a buffer of size determined by the argument dist, in this case 20 m
+```
+
+#4--Filter the eateries in your neighborhood.
+```{r}
+my_eateries1 <- hamilton_eateries %>% # Pass the object `hamilton_eateries` to the next function
+  st_crop(my_neighborhood1) # The function `st_crop()` crops a simple features object based on a second object, in this case `my_neighborhood`
+```
+#5--Identify the nodes of the network that are in the selected neighborhood. We will save them in a new object called `my_nodes`:
+```{r}
+my_nodes1 <- hamilton_graph_local %>% # Pass the hamilton_graph_local object to the next function
+  activate(nodes) %>%  # Activate the nodes of the `tbl_graph` object
+  as_tibble() %>% # Convert to data frame
+  st_as_sf() %>% # Convert to simple features
+  st_crop(my_neighborhood1) #%>% # Crop using `my_neighborhood`
+#st_drop_geometry()
+```
+
+#6--use these nodes to subset the network
+```{r}
+my_graph1 <- hamilton_graph_local %>% # Pass the object `hamilton_graph_local` to the next function
+  induced_subgraph(v = my_nodes$nodeID, impl = "copy_and_delete") %>% # Induced subgraph will take the input graph (that is `hamilton_graph_local`) and induce a subgraph that includes only the vertices (i.e., nodes) indicated in the argument; notice that we are passing the `nodeID` (the unique identifiers of the nodes) of our cropped list of nodes. The method for inducing the subgraph is to copy the elements that will be retained, and then deleting the rest.
+  as_tbl_graph() # Convert the graph to a `tbl_graph` object
+```
+
+#7--identify the components of `my_graph1`:
+```{r}
+my_components <- components(my_graph1)
+```
+
+#8--add the information about component membership to the nodes and then check the componants:
+```{r}
+my_graph1 <- my_graph1 %>% # Pass object `my_graph` to next function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  mutate(component = factor(my_components$membership)) # Use `mutate()` to create a new column with the component membership of the nodes. The membership is a number, but in reality a label, so we will convert it to a factor
+```
+
+```{r}
+my_graph1 %>% # Pass object `my_graph` to next function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  as_tibble() %>% # Convert to data frame
+  summary() # Obtain a summary of the table
+```
+#9-- filter the component you want to use and then plot it:
+```{r}
+my_graph1 <- my_graph1 %>% # Pass the object `my_graph` to the following function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  filter(component == 1) # Filter by matching to the component that we wish to retain
+```
+
+```{r}
+ggplot() + # Create a blank ggplot object
+  geom_sf(data = my_graph1 %>% # To plot a `sf` object we use `geom_sf()`, and for this plot we want to use `my_graph`
+            activate(edges) %>% # Activate the edges of the `tbl_graph` object
+            as_tibble() %>% # Convert to data frame
+            st_as_sf()) + # Convert to simple features
+  geom_sf(data = my_graph1 %>% # To plot a `sf` object we use `geom_sf()`, and for this plot we want to use `my_graph`
+            activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+            as_tibble() %>% # Convert to data frame
+            st_as_sf(), # Convert to simple features
+          aes(color = component)) # Map the color of the nodes to the component
+```
+#10--relabel the nodes starting from 1 and make sure they are ordered:
+```{r}
+my_graph1 <- my_graph1 %>% # Pass the object `my_graph` to the following function
+  activate(nodes) %>% # Activate the nodes of the `tbl_graph` object
+  mutate(nodeID = 1:n()) # Use the function `mutate()` to modify the contents of the column `nodeID`: the new values will be from 1 to the number of rows
+my_graph1
+```
+
+
+8. What is the density of the nodes and links in your chosen neighborhood? (5)
+
+9. Plot the degree distribution of the nodes in your chosen neighborhood. How does it compare to Westdale? (10)
+
+10. Calculate the betweenness of the nodes and links in your chosen neighborhood and plot. How do these compare to Westdale? (10)
+
+11. Plot the eateries in your chosen neighborhood along with the betweenness of the links. Discuss the pattern observed. (10)
+
+12. Based on your analyses above, discuss Westdale and your chosen neighborhood in terms of their potential for supporting walking. (10)

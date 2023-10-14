@@ -1,0 +1,305 @@
+---
+title: "Exercise 34: Spatial Interaction Analysis"
+output: html_notebook
+---
+
+For this exercise, you will work with the road network in Hamilton.
+
+* Readings:
++ `04-Spatial-Interaction.Rmd` (found under Labs/Assignments) 
++ `Chapter 5.pdf`
++ `Basic Network Concepts.ppt`
+
+* Due date:	See course outline for due date.
+
+* Materials: This R Notebook, and a zip file that contains the following files (found under Labs/Assignments)
++ A file called `hamilton_graph_zoned.RData`
++ A file called `taz_hamilton.RData`
++ A file called `od_full.RData`
+
+* Instructions:	Answers must be provided by typing your solutions using RStudio and this R Notebook file. Change the name of the file to `Exercise 3 (Name-Student Number).Rmd`
+
+Add new code chunkS by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*. When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+***
+
+# Preliminaries
+
+Begin by clearing the workspace and loading the packages that you will need for this exercise. For instance, you will need the `tidy_graph` package to work with the road network. Make sure all packages that you need are installed and loaded `library()`. 
+```{r message=FALSE}
+library(igraph)
+library(scales)
+library(sf)
+library(tidygraph)
+library(tidyverse)
+library(units)
+```
+
+Load the data. These are the same data objects that you saw in your reading (`04-Spatial-Interaction.Rmd`):
+```{r}
+load("hamilton_graph_zoned.RData")
+load("taz_hamilton.RData")
+load("od_full.RData")
+```
+
+***
+
+# EXERCISE 4: Spatial Interaction Analysis (100 marks)
+
+## Questions
+
+1. How many different types of links are there in the road network? (5)
+
+```{r}
+hamilton_graph_zoned %>%
+  activate(edges) %>%
+  pull(highway) %>%
+  table()
+```
+
+>>There are 10 different types of links in the road network.
+
+2. Assume travel speeds for different types of links. Explain your assumptions. The types of links in the Open Street Maps classification can be found [here](https://wiki.openstreetmap.org/wiki/Key:highway) (5)
+
+
+>> The students can consult a variety of sources for speed limits, including [wikipedia](https://en.wikipedia.org/wiki/Speed_limits_in_Canada). They will need to explain their assumptions.
+
+3. Use the traffic analysis zones and road network with the speeds you assumed in (2) to calculate the shortest path inter-centroid travel time. What is the diameter of the network in travel time? (20) 
+
+>> To calculate the shortest paths the students first need to add the length of the links to the road network:
+
+```{r}
+hamilton_graph_zoned <- hamilton_graph_zoned %>% # Pass the object `hamilton_graph_zoned` to the following function
+  activate(edges) %>% # Activate the edges of the `tbl_graph` object
+  mutate(length = st_length(geometry) %>% # Use function `st_length()` and the geometry of the edges to calculate the length of the link, and use `mutate()` to create a new column in the table to store this information
+           set_units("km"))
+```
+
+>> Then, `mutate()` is used to add a new column for travel time. The function `case_when()` is used to assign speeds to various types of links (the speeds below are for illustration purposes only, the students will likely have assumed somewhat different speeds):
+
+```{r}
+hamilton_graph_zoned <- hamilton_graph_zoned %>% # Pass the object `my_graph` to the next function
+  activate(edges) %>% # Activate the nodes
+  mutate(time = case_when(highway == "motorway" | highway == "motorway_link" ~ length/set_units(9, "km/h"),
+                          highway == "primary" | highway == "primary_link" ~ length/set_units(9, "km/h"),
+                          highway == "secondary" | highway == "secondary_link" ~ length/set_units(9, "km/h"),
+                          highway == "tertiary" | highway == "tertiary_link" ~ length/set_units(9, "km/h"),
+                          highway == "residential" | highway == "residential_link" ~ length/set_units(9, "km/h")))
+```
+
+>> One travek time on the links is available, `igraph::distances()` is used to find the travel times on the shortest paths between zone centroids:
+
+```{r}
+centroid_times <- distances(hamilton_graph_zoned, # Calculate shortest path costs in a graph
+                            v = hamilton_graph_zoned %>% # Choose the origin nodes in the graph for calculating distances
+                              activate(nodes) %>% # Activate the nodes
+                              filter(!is.na(GTA06)) %>% # Filter nodes that are _not_ NAs. This will select only centroid nodes, i.e., those with a valid GTA06 identifier 
+                              pull(nodeID), # Pull the node identifiers for the origins
+                            to = hamilton_graph_zoned %>% # Choose the origin nodes in the graph for calculating distances
+                              activate(nodes) %>% # Activate the nodes
+                              filter(!is.na(GTA06)) %>% # Filter nodes that are _not_ NAs. This will select only centroid nodes, i.e., those with a valid GTA06 identifier 
+                              pull(nodeID), # Pull the node identifiers for the destinations
+                            weights = hamilton_graph_zoned %>% # The weights will be the link lengths (i.e., distance)
+                              activate(edges) %>% # Activate the edges of the graph
+                              pull(time)) # Pull the length of the links
+```
+
+>> This is the summary of the inter-centroid shortest path travel times (in hours):
+
+```{r}
+centroid_times %>% # Pass the inter-centroid distances (a matrix) to the following function
+  as.vector() %>% # Convert to vector
+  summary() # Tabulate a summary
+```
+
+4. Join the travel time to the origin-destination table for further analysis (10)
+
+>> To join the travel times to the origin-destination matrix, the students need to create a table with the zonal identifiers at the origin and the destination, and then copy the travel times to that table. In addition, the students can convert the times from hours to minutes if they wish:
+
+```{r}
+centroid_costs <- expand.grid(Origin = hamilton_graph_zoned %>% # The function `expand.grid()` creates a table with all the combinations of values given in the inputs; the first input is the vector of zone identifiers of the origin nodes in the network used to calculate the distances
+                                activate(nodes) %>% # Activate the nodes
+                                #as_tibble() %>% # Convert to data frame
+                                filter(!is.na(GTA06)) %>% # Filter nodes that are _not_ NAs. This will select only centroid nodes, i.e., those with a valid GTA06 identifier 
+                                pull(GTA06), # Pull the zone identifiers
+                              Destination = hamilton_graph_zoned %>% # The second input is the vector of zone identifiers of the destinations nodes in the network used to calculate the distances
+                                activate(nodes) %>% #Activate the nodes
+                                #as_tibble() %>%
+                                filter(!is.na(GTA06)) %>%  # Filter nodes that are _not_ NAs. This will select only centroid nodes, i.e., those with a valid GTA06 identifier 
+                                pull(GTA06)) %>%  # Pull the zone identifiers
+  mutate(network_time = centroid_times %>% # Use `mutate()` to add a column with the inter-centroid shortest path distances 
+           as.vector() %>% # Convert the inter-centroid shortest path distances from matrix to vector
+           set_units("h") %>% # Set the units to hours
+           set_units("min")) # Convert to minutes
+```
+
+>> Join to origin-destination table, as shown below:
+
+```{r}
+od_full <- od_full %>% # Pass the object `od_full` to the next function
+  left_join(centroid_costs, # Join to object `centroid_distances`
+            by = c("Origin", "Destination")) # Join by matching the columns `Origin` and `Destination`
+```
+
+5. What is the trip length distribution of shopping trips? Hint: use `cut()` to create a categorical variable with suitable travel time intervals (you may need to experiment with different intervals); then group by that variable, and `summarize()` to sum all trips by group (see for example lines 409, 418, and 427 of notebook `04-Spatial-Interaction.Rmd`). Discuss the results of plotting the trip length distribution (20)
+
+>> First create a categorical variable for grouping the trips:
+
+```{r}
+od_full <- od_full %>% # Pass object `od_full` to the next function; `mutate()` will create two new columns in the table: origin_mass_class and destination_mass_class
+  mutate(time_class = cut(network_time, # Cut the variable population using breaks
+                          breaks = seq(0, 348, 1))) # The breaks are interval in minutes; 35 because that is the diameter of the network, i.e., travel time on the longest shortest path
+```
+
+>> Group the table by these time classes, and then sum shop trips. The students can calculate the frequency if they want, but it is ok to report the trip length distribution in number of trips:
+
+```{r}
+trips_shop_by_time <- od_full %>% # Pass object od_full to the next function
+  st_drop_geometry() %>% # Drop the geometry of the object
+  filter(Trips_shop > 0) %>% # Filter all shopping trips greater than zero
+  select(Trips_shop, time_class) %>% # Select the columns `Trips_shop`, `population`, and `origin_mass_class`
+  group_by(time_class) %>% # Group by `time_class`
+  summarize(Trips = sum(Trips_shop), # Summarize the trips by group; the summarized variable is `Trips` and it is the sum of all `Trips_work` within a group
+            .groups = "drop") %>%
+  mutate(frequencyt=Trips/sum(Trips))# Drop the groups after summarizing
+
+```
+
+>> Plot the trip length distribution
+
+```{r}
+ggplot(trips_shop_by_time) +
+  geom_col(aes(x = time_class, y = Trips))
+```
+
+>> This trip length distribution depends on the speeds assumed for the links. The shape will probably not change a lot, but the times will; for instance, I assumed speeds that are too high, which accounts for the number of trips that take at most one minute! (The first column in the plot)
+
+6. Join the attributes of the traffic analysis zones to the origin-destination table. With the information available calibrate a gravity model for shopping trips. Hint: remember to filter `Trips_shop` > 0. Plot and discuss the distance-decay function (20)
+
+>> First join the attributes of the traffic analysis zones to the origin-destination table. IT IS VERY IMPORTANT TO JOIN THE ATTRIBUTES THAT ARE MASS AT THE ORIGIN AND THE DESTINATION USING THE RIGHT KEYS! See lines 355 and 364 in notebook `04-Spatial-Interaction.Rmd`.
+
+>> First join the attributes that are mass at the origin:
+
+```{r}
+od_full <- od_full %>% # Pass object `od_full` to the next function
+  left_join(taz_hamilton %>% # Join to table `taz_hamilton`
+              select(GTA06:vehicles) %>% # Select from table `taz_hamilton` the columns ranging from `GTA06` (the zone identifier) to `vehicles`
+              st_drop_geometry(), # Drop the geometry of `taz_hamilton`
+            by = c("Origin" = "GTA06")) # Join `od_full` based on column `Origin` to `taz_hamilton` by column `GTA06`
+```
+
+
+>> Then the attributes that are mass at the destination:
+
+```{r}
+od_full <- od_full %>% # Pass object `od_full` to the next function
+  left_join(taz_hamilton %>% # Join to table `taz_hamilton`
+              select(GTA06, Pj_work:Jobs_Retail) %>% # Select from table `taz_hamilton` columns `GTA06` (the zone identifier), and then those ranging from `Pj_work` to `total_employment`
+              st_drop_geometry(), # Drop the geometry of `taz_hamilton`
+            by = c("Destination" = "GTA06")) # Join `od_full` based on column `Destination` to `taz_hamilton` by column `GTA06`
+```
+
+>> At this point, the students must have in their table `od_full` all the data items needed to estimate a gravity model, but first they need to log-transform their independent variables as follows:
+
+```{r}
+od_model <- od_full %>% # Copy `od_full` to a new object called `od_model` and pass it on to the next function
+  filter(Trips_shop > 0) %>% # Filter all zones with work trips greater than zero; equivalently, remove zone pairs that did _not_ have work trip between them
+  mutate(log_population = log(population), # Use `mutate()` to transform the variables; this will create new columns in the table with the logged variables; `ifelse()` is useful to add a small constant _only_ if the value of the variable is zero
+         log_House = ifelse(House == 0, log(House + 0.001), log(House)), 
+         log_Apartment = ifelse(Apartment == 0, log(Apartment + 0.001), log(Apartment)),
+         log_Townhouse = ifelse(Townhouse == 0, log(Townhouse + 0.001), log(Townhouse)),
+         log_Inc_less_15k = ifelse(Inc_less_15k == 0, log(Inc_less_15k + 0.001), log(Inc_less_15k)),
+         log_Inc_15k_to_40k = ifelse(Inc_15k_to_40k == 0, log(Inc_15k_to_40k + 0.001), log(Inc_15k_to_40k)),
+         log_Inc_40k_to_60k = ifelse(Inc_40k_to_60k == 0, log(Inc_40k_to_60k + 0.001), log(Inc_40k_to_60k)),
+         log_Inc_60k_to_100k = ifelse(Inc_60k_to_100k == 0, log(Inc_60k_to_100k + 0.001), log(Inc_60k_to_100k)),
+         log_Inc_100k_to_125k = ifelse(Inc_100k_to_125k == 0, log(Inc_100k_to_125k + 0.001), log(Inc_100k_to_125k)),
+         log_Inc_more_125k = ifelse(Inc_more_125k == 0, log(Inc_more_125k + 0.001), log(Inc_more_125k)),
+         log_drivers = ifelse(drivers == 0, log(drivers + 0.001), log(drivers)),
+         log_ft_workers =ifelse(ft_workers == 0, log(ft_workers + 0.001), log(ft_workers)),
+         log_pt_workers = ifelse(pt_workers == 0, log(pt_workers + 0.001), log(pt_workers)),
+         log_vehicles = ifelse(vehicles == 0, log(vehicles + 0.001), log(vehicles)),
+         log_Jobs_Office_Clerical = ifelse(Jobs_Office_Clerical == 0, log(Jobs_Office_Clerical + 0.001), log(Jobs_Office_Clerical)),
+         log_Jobs_Manufacturing_Construction_Trades = ifelse(Jobs_Manufacturing_Construction_Trades == 0, log(Jobs_Manufacturing_Construction_Trades + 0.001), log(Jobs_Manufacturing_Construction_Trades)),
+         log_Jobs_Professional = ifelse(Jobs_Professional == 0, log(Jobs_Professional + 0.001), log(Jobs_Professional)),
+         log_Jobs_Retail = ifelse(Jobs_Retail == 0, log(Jobs_Retail + 0.001), log(Jobs_Retail)),
+         log_net_time = log(network_time))
+```
+
+>> The model can be calibrated using `gml()` (see line 598 in notebook `04-Spatial-Interaction.Rmd`)
+
+```{r}
+# Use `glm()` for estimating a generalized linear model
+
+mod_shop = glm(Trips_shop ~  # The dependent variable (on the left hand side of the equation) is the number of trips
+                 # Mass variables at the origin
+                 log_population + log_drivers + log_vehicles + # Population, and number of drivers and vehicles
+                 log_ft_workers + log_pt_workers + # Number of full time and part time workers
+                 log_Apartment + log_Townhouse + log_House + # Number of dwellings of different types
+                 log_Inc_less_15k + log_Inc_15k_to_40k + log_Inc_40k_to_60k + log_Inc_60k_to_100k + log_Inc_100k_to_125k +  log_Inc_more_125k + # Number of households with different levels of income
+                 # Mass variables at the destination
+                 log_Jobs_Office_Clerical + log_Jobs_Manufacturing_Construction_Trades + log_Jobs_Professional + log_Jobs_Retail + # Number of jobs of different types
+                 # Cost variables
+                 log_net_time, # Network distance
+               family = poisson (link = log), # The model is `poisson` with a logarithmic link function
+               data = od_model) # The data for estimating the model is in table `od_model`
+```
+
+>> Use `summary()` to print the results of the model:
+
+```{r}
+summary(mod_shop)
+```
+
+>> The students may remove some variables from the model if they are not significant, but this is not essential. 
+
+>> See line 651 in notebook `04-Spatial-Interaction.Rmd` for an example of how to plot the distance-decay function.
+
+```{r}
+data.frame(time = seq(1, # Simulate a time variable
+                          348, # Diameter of the network in minutes 
+                          0.1)) %>% # Use 1 minute increments
+  mutate(f = time^mod_shop$coefficients["log_net_time"]) %>% # Calculate the distance-decay function; retrieve the parameter of the distance variable from the model object by means of `mod_work$coefficients["log_net_distance"]`
+  ggplot() + # Create a blank ggplot object
+  geom_line(aes(x = time, # Plot a line; the x-axis is the network distance
+             y = f)) + # The y-axis is the distance-decay
+  ylab(expression(f(t[ij]))) # Set the y-axis label
+```
+
+>> Students should discuss the distance-decay plot here.
+
+7. Suppose that you are planning to open a new business, and that you have a target demographic by household income. What is the name of your business? Choose one type of household by income level from your data as your target demographic (e.g., Inc_less_15k). Then choose two traffic analysis zones (the centroid is fine for this analysis) and calculate the market potential of your store. The market potential is the accessibility of your business to households of your target demographic. Which of the two zones you identified would be best for your new business and why? (20)
+
+>> This problem is identical to the empirical application in the reading. The students need to choose two zone centroids and a household income level. For illustration, I am going to choose Inc_60k_to_100k and zones 5126 and 5188 (see map below).
+
+```{r}
+ggplot() + 
+  geom_sf(data = taz_hamilton, 
+          fill = NA) +
+  geom_sf(data = taz_hamilton %>%
+            filter(GTA06 == 5116), 
+          fill = "green") +
+  geom_sf(data = taz_hamilton %>%
+            filter(GTA06 == 5078), 
+          fill = "red")
+```
+
+>> Market potential is simply the accessibility of the zone to the target households:
+
+```{r}
+market_potential <- od_full %>% # Pass the object `od_full` to the next function; results will be saved to `market_potential`
+  st_drop_geometry() %>% # Drop the geometry of the simple features object
+  filter(Origin == 5116 | Origin == 5078) %>% # Filter the two zones of interest
+  mutate(network_time = drop_units(network_time), # Drop the units of the network times
+         f = network_time^mod_shop$coefficients["log_net_time"]) %>% # Calculate the distance decay effect based on the network time between origins and destinations
+  drop_na(Inc_60k_to_100k) %>% # Drop missing variables
+  group_by(Origin) %>% # Group the table by `Origin`
+  summarize(market_potential = sum(Inc_60k_to_100k * f), # Accessibility is the weighted sum of target households; the weights are the values of the decay-function
+            .groups = "drop") # Drop the groups after summarizing
+```
+
+>> The market potentials of the two zones are:
+
+```{r}
+market_potential
+```
+
+>> Students should choose the zone with the highest market potential, because it means that more households of their target demographic have access to the store.

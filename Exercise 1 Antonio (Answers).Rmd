@@ -1,0 +1,205 @@
+---
+title: "Exercise 1: Transportation Trends"
+output: html_notebook
+---
+
+Transport is fraught with many issues including growth in demand for energy use, greenhouse gases, urban air pollution and noise, negative health impacts and road traffic accidents and fatalities. It is well argued that these problems are not typical to one region but are becoming global in nature. Similar trends have been observed in many places around the world, albeit there are still individual differences among various countries. The observed data suggest an emerging transport crisis that could potentially compromise our quality of life.
+
+In this exercise, you will analyze trends pertaining to energy use and emissions in several countries. In so doing, you will gain a better understanding of emerging transportation trends and their impacts on quality of life.
+
+* Readings: Overview of Data Analysis and Visualization Using R (found under Labs/Assignments)
+* Due date:	See course outline for due date.
+* Materials: This R Notebook, and the following Excel files (found under Labs/Assignments)
+    + `Energy and Emissions.xlsx`
+* Instructions:	Answers must be provided by typing your solutions using RStudio and this R Notebook file. Change the name of the file to `Exercise 1 (Name-Student Number).Rmd`
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*. When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+#Preliminaries
+
+Begin by loading the datasets that you will need for this exercise. They are available from the Readings section. Note that you need the package `readxl`. Make sure that it is installed before loading it with `library()`. 
+```{r}
+library(readxl)
+df_ee <- read_excel("Energy and Emissions.xlsx") #data frame with energy and emissions data
+```
+
+#EXERCISE 1: Energy Use and Emission Trends (100 marks)
+
+1.	What was the approximate population of Earth circa 2016? How many barrels of oil per day did this population consume? (10)
+
+## ANSWER
+```{r}
+#total population of Earth, circa 2016
+sum(df_ee$Population)
+```
+
+```{r}
+#total oil consumption
+toc <- sum(df_ee$bblpd)
+toc
+```
+
+2.	What proportion of the world's oil is consumed by Canada and the United States? Do these two countries have the same per capita levels of demand for energy use? Explain?  (15)
+
+## ANSWER
+To answer this question, we need to identify the consumption of oil by Canada and the United States, and calculate the per capita levels of energy use.
+
+First, identify the oil consumption of Canada and the United States. This can be done by examining the data frame and finding the values, or by doing the following, first for Canada (note that names are case sensitive):
+```{r}
+oc_canada <- df_ee$bblpd[df_ee$Country == "CANADA"]
+oc_canada
+```
+
+Then for the US:
+```{r}
+oc_us <- df_ee$bblpd[df_ee$Country == "UNITED STATES"]
+oc_us
+```
+
+The proportion of oil consumed by these two countries is as follows, for Canada (2 marks):
+```{r}
+oc_canada / toc
+```
+
+And for the US (2 marks):
+```{r}
+oc_us / toc
+```
+
+The per-capita oil consumption is calculated as oil consumption divided by population. The population can be obtained by examination of the table, or as follows:
+```{r}
+pop_canada <- df_ee$Population[df_ee$Country == "CANADA"]
+pop_canada
+```
+
+And:
+```{r}
+pop_us <- df_ee$Population[df_ee$Country == "UNITED STATES"]
+pop_us
+```
+
+Then, the per-capita consumption for these two countries is  (2 marks each):
+```{r}
+pcoc_canada <- oc_canada / pop_canada
+pcoc_canada
+pcoc_us <- oc_us / pop_us
+pcoc_us
+```
+
+## DISCUSSION 
+The two countries have very similar levels of per capita consumption; in fact, Canada's is a little bit higher. Canada consumes a smaller proportion of world resources due to its much smaller population (2 marks).
+
+3.	Calculate the consumption of oil in barrels per day per 1000 people for the countries listed in the data frame. What type of pattern do you observe? Explain. (Hint: rank countries according to their oil consumption per 1000 people. You can use the `order()` function to do this) (20)
+
+```{r}
+?order
+```
+
+Also see http://www.statmethods.net/management/sorting.html.
+
+## ANSWER
+As usual, there are multiple ways of doing this. One is to first calculate the per-capita oil consumption for all countries and then adding it to a new data frame.
+```{r}
+pcoc <- df_ee$bblpd / df_ee$Population 
+Country <- df_ee$Country
+df_pcoc <- data.frame(Country, pcoc)
+```
+
+Next, rank countries based on the per-capita oil consumption:
+```{r}
+df_pcoc <- df_pcoc[order(pcoc),]
+```
+
+## DISCUSSION
+Some patterns can be discerned from examination of the ranked data frame. In general, poor countries (many of them in Africa) have low per-capita levels of consumption. In contrast, rich countries in Europe and North America, as well as rich oil producers in the Middle East, have high per-capital levels of consumption. Whether low levels of energy consumption are due to warm climates or to low rent, is a question.
+
+4. Use simple regression analysis to assess the relationship between GDP per-capita and per-capita oil consumption. (hint: begin creating a scatterplot of these two variables; you can also add labels to your plot - try changing the `size` of the text for clarity). What is the relationship between GDP per-capita and oil consumption by country? Which countries are relatively more efficient and which countries are relatively less efficient in their use of energy? (25)
+
+## ANSWER
+The package `ggplot2` can be used to create a scatterplot and then overlay a regression line. First load the package.
+```{r}
+library(ggplot2)
+```
+
+Add per-capita oil consumption to the existing data frame, so that all the information is contained in a single data frame.
+```{r}
+df_ee$pcoc <- pcoc
+```
+
+Create a scatterplot using the two variables.
+```{r}
+ggplot(data = df_ee, aes(x = GDPPC, y = pcoc)) + geom_point()
+```
+
+It can be seen from the scatterplot the following general relationship: as GDP per capita increases, the consumption of oil also tends to increase. How strong is this relationship? 
+
+```{r}
+mod <- lm(bblpd ~ poly(GDPPC,2), df_ee)
+summary(mod)
+```
+
+Let us add a regression line to the previous plot:
+```{r}
+ggplot(data = df_ee, aes(x = GDPPC, y = pcoc)) + geom_point() + geom_smooth(method = lm, formula = y ~ poly(x,2))
+```
+
+Add labels:
+```{r}
+ggplot(data = df_ee, aes(x = GDPPC, y = pcoc)) + geom_point() + geom_smooth(method = lm, formula = y ~ poly(x,2)) + geom_text(label = Country, size = 3)
+```
+
+5.	How many barrels of oil per day would be needed, if every country in the world had per capita consumption equivalent to that of Canada? Compare your results to the total daily oil consumption of the world and explain what you find. (15)
+
+## ANSWER
+To answer this question, it is necessary to calculate the oil consumption under this hypotethical scenario. We already know the per-capita oil consumption of Canada. To calculate the oil consumption of other countries, we need to multiply the per-capita oil consumption by the corresponding population. This can be done like so (if we call this hypothetical total oil consumption):
+```{r}
+htoc <- sum(pcoc_canada * df_ee$Population)
+htoc
+```
+
+Compared to the actual oil consumption:
+```{r}
+htoc/toc
+```
+
+## DISCUSSION
+The world would need to produce 4.6 times more oil to satisfy the demand for energy, if every country had the same per-capita consumption levels of oil as Canada. Is this sustainable?
+
+6.	Using the data in the data frame, calculate the increase or decrease in the amount of generated CO2 emissions for Canada, Denmark, the Netherlands and the United States in the time period 1995 to 2015. Which of these countries managed to reduce their CO2 levels during these two decades? (10)
+
+## ANSWER
+The difference in emissions between the two years can be calculated as follows, and added to a new data frame:
+```{r}
+co2.diff <- df_ee$CO2_2015 - df_ee$CO2_1995
+df_co2.diff <- data.frame(Country, co2.diff)
+```
+
+To see the trends for these countries, we can examine the dataframe directly, or retrieve from the data frame as follows:
+```{r}
+df_co2.diff[df_co2.diff == "CANADA",]
+```
+
+Try changing the name to see what the trend has been for the other countries. When the difference is positive, this means that emissions increased in the period.
+
+7.	Which country in Table 2 had the highest CO2 emissions per square kilometer of land area in 2015? Which country has the lowest? (5) 
+
+## ANSWER
+Calculate the CO2 emmisions per square kilometer of land area as follows, and add to a new data frame:
+```{r}
+co2.km2 <- df_ee$CO2_2015 / df_ee$Area
+df_co2.km2 <- data.frame(Country, co2.km2)
+```
+
+The countries with the highest and lowest amounts of CO2 emissions per unit area can be found by ranking the table:
+```{r}
+df_co2.km2 <- df_co2.km2[order(co2.km2),]
+```
+
+Inspection reveals that the country with the highest CO2 emissions per unit area is Singapore. The lowest CO2 emissions per unit area correspond to Angola.
+
+As an alternative, the `max` and `min` functions can be used:
+```{r}
+df_co2.km2$Country[df_co2.km2$co2.km2 == max(df_co2.km2$co2.km2)]
+df_co2.km2$Country[df_co2.km2$co2.km2 == min(df_co2.km2$co2.km2)]
+```
+
